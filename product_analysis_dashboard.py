@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import mysql.connector
 from mysql.connector import Error
+import time
 
 # 配置信息
 db_config = {
@@ -27,18 +28,17 @@ FROM
   LEFT JOIN (
   SELECT 
   cinvcode AS sku, 
-  unit_price, -- 单个SKU的采购价 
   threecategory_name_exhibition, 
   main_project_group_name, 
-  final_status_name, 
-  responsible_stock_status, 
   status, 
   cinvproductstatus, 
   category_attribute
-  FROM bi.sku_detail_dim -- 可根据需要添加过滤条件（如有效采购价）
+  FROM bi.sku_detail_dim
   ) pur ON TRIM(rg.sku) = TRIM(pur.sku)
 """
 
+# 缓存装饰器
+@st.cache_data(ttl=3600)  # 缓存1小时
 def get_data_from_db():
     """
     从数据库获取数据
@@ -46,19 +46,23 @@ def get_data_from_db():
     """
     try:
         # 建立数据库连接
+        st.info("正在连接数据库...")
+        start_time = time.time()
         connection = mysql.connector.connect(**db_config)
         
         if connection.is_connected():
             st.success("数据库连接成功！")
             
             # 执行查询
+            st.info("正在执行查询...")
             df = pd.read_sql(query, connection)
-            st.success(f"数据获取成功，共 {len(df)} 条记录")
+            st.success(f"数据获取成功，共 {len(df)} 条记录，耗时 {time.time() - start_time:.2f} 秒")
             return df
     
     except Error as e:
         st.error(f"数据库连接或查询错误: {e}")
-        return None
+        st.warning("尝试使用备用数据...")
+        return get_sample_data()
     
     finally:
         # 关闭连接
@@ -66,6 +70,24 @@ def get_data_from_db():
             connection.close()
             st.info("数据库连接已关闭")
 
+def get_sample_data():
+    """
+    获取示例数据作为备用
+    """
+    # 创建示例数据
+    data = {
+        "产品编码": [f"P{i:04d}" for i in range(1, 101)],
+        "主项目组": [f"项目组{i % 5 + 1}" for i in range(100)],
+        "产品销售状态": ["正常" if i % 2 == 0 else "暂停" for i in range(100)],
+        "产品状态": ["活跃" if i % 3 == 0 else "非活跃" for i in range(100)],
+        "末级品类": [f"品类{i % 8 + 1}" for i in range(100)],
+        "产品属性名称": ["属性A" if i % 2 == 0 else "属性B" for i in range(100)]
+    }
+    df = pd.DataFrame(data)
+    st.info(f"使用示例数据，共 {len(df)} 条记录")
+    return df
+# 缓存装饰器
+@st.cache_data(ttl=3600)  # 缓存1小时
 def process_data(df):
     """
     处理数据，去除空值和重复值
@@ -84,7 +106,6 @@ def process_data(df):
     except Exception as e:
         st.error(f"数据处理错误: {e}")
         return None
-
 def create_bar_chart(df):
     """
     创建主项目组产品数量条形图
@@ -93,7 +114,6 @@ def create_bar_chart(df):
         # 按主项目组分组，计算去重产品编码数量
         project_group_count = df.groupby("主项目组").size().reset_index(name="产品数量")
         project_group_count = project_group_count.sort_values(by="产品数量", ascending=False)
-        
         # 创建条形图
         fig = px.bar(
             project_group_count, 
@@ -133,7 +153,7 @@ def create_pie_chart(df):
             other_count = category_count.tail(len(category_count) - 10)["产品数量"].sum()
             other_row = pd.DataFrame([["其他", other_count]], columns=["末级品类", "产品数量"])
             category_count = pd.concat([top_categories, other_row], ignore_index=True)
-        
+            
         # 创建饼图
         fig = px.pie(
             category_count, 
@@ -165,10 +185,12 @@ def main():
         page_icon="📊",
         layout="wide"
     )
-    
     # 页面标题
     st.title("2025年上半年销售数据分析看板")
-    
+    st.markdown("""
+    本看板展示了2025年上半年的销售数据，包括产品数量、销售状态、项目组分布等。
+    您可以使用侧边栏的筛选器来定制分析范围。
+    """)
     # 数据获取和处理
     df = get_data_from_db()
     
@@ -227,7 +249,6 @@ def main():
             
             # 创建图表
             col1, col2 = st.columns(2)
-            
             with col1:
                 st.subheader("各主项目组产品数量")
                 bar_fig = create_bar_chart(filtered_df)
@@ -249,7 +270,6 @@ def main():
                 file_name="product_analysis_data.csv",
                 mime="text/csv"
             )
-        
         else:
             st.warning("处理后的数据为空，请检查数据质量")
 
