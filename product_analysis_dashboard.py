@@ -45,10 +45,18 @@ def get_data_from_db():
     返回：DataFrame或None
     """
     try:
-        # 建立数据库连接
+        # 建立数据库连接，优化连接配置
         st.info("正在连接数据库...")
         start_time = time.time()
-        connection = mysql.connector.connect(**db_config)
+        
+        # 优化数据库连接配置
+        db_config_optimized = db_config.copy()
+        db_config_optimized['connect_timeout'] = 30  # 增加超时时间到30秒
+        db_config_optimized['read_timeout'] = 60  # 读取超时
+        db_config_optimized['write_timeout'] = 60  # 写入超时
+        
+        # 尝试连接数据库
+        connection = mysql.connector.connect(**db_config_optimized)
         
         if connection.is_connected():
             st.success("数据库连接成功！")
@@ -61,31 +69,26 @@ def get_data_from_db():
     
     except Error as e:
         st.error(f"数据库连接或查询错误: {e}")
-        st.warning("尝试使用备用数据...")
-        return get_sample_data()
+        st.error("请检查以下事项:")
+        st.error("1. 数据库服务器地址和端口是否正确")
+        st.error("2. 数据库用户名和密码是否正确")
+        st.error("3. 网络环境是否可以访问数据库服务器")
+        st.error("4. 数据库服务是否正常运行")
+        return None
+    
+    except Exception as e:
+        st.error(f"发生未知错误: {e}")
+        return None
     
     finally:
         # 关闭连接
-        if 'connection' in locals() and connection.is_connected():
-            connection.close()
-            st.info("数据库连接已关闭")
-
-def get_sample_data():
-    """
-    获取示例数据作为备用
-    """
-    # 创建示例数据
-    data = {
-        "产品编码": [f"P{i:04d}" for i in range(1, 101)],
-        "主项目组": [f"项目组{i % 5 + 1}" for i in range(100)],
-        "产品销售状态": ["正常" if i % 2 == 0 else "暂停" for i in range(100)],
-        "产品状态": ["活跃" if i % 3 == 0 else "非活跃" for i in range(100)],
-        "末级品类": [f"品类{i % 8 + 1}" for i in range(100)],
-        "产品属性名称": ["属性A" if i % 2 == 0 else "属性B" for i in range(100)]
-    }
-    df = pd.DataFrame(data)
-    st.info(f"使用示例数据，共 {len(df)} 条记录")
-    return df
+        if 'connection' in locals():
+            try:
+                if connection.is_connected():
+                    connection.close()
+                    st.info("数据库连接已关闭")
+            except:
+                pass
 # 缓存装饰器
 @st.cache_data(ttl=3600)  # 缓存1小时
 def process_data(df):
